@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"reflect"
-	"strconv"
 
 	"github.com/jackc/pgtype"
 	"github.com/jackc/pgx/v4/pgxpool"
@@ -122,21 +120,6 @@ func parseArr(arrValue interface{}) (result []reflect.Value) {
 	default:
 		fmt.Printf("value: %v\n", arrValue)
 		fmt.Printf("WARN: kind %T is not supported\n", arrValue)
-	}
-	return
-}
-
-func reflectValue(val reflect.Value) (result interface{}) {
-	switch val.Kind() {
-	case reflect.Slice, reflect.Array:
-		return []string{}
-	case reflect.String:
-		return val.String()
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return strconv.FormatInt(val.Int(), 10)
-	case reflect.Struct:
-	default:
-		panic(errors.New("convert reflectValue error"))
 	}
 	return
 }

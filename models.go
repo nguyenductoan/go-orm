@@ -1,9 +1,11 @@
 package main
 
 import (
+	"reflect"
 	"time"
 
 	"github.com/gofrs/uuid"
+	"github.com/jackc/pgx/v4/pgxpool"
 )
 
 type Model interface {
@@ -37,4 +39,46 @@ type TTYAccessToken struct {
 	RequestId   uuid.UUID `db:"request_id"`
 	TTL         int       `db:"ttl"`
 	CreatedAt   time.Time `db:"created_at"`
+}
+
+type ApplicationRepo struct {
+	Repository
+}
+
+func NewApplicationRepo(db *pgxpool.Pool) *ApplicationRepo {
+	repository := Repository{
+		Db:         db,
+		TableName:  "applications",
+		Model:      reflect.TypeOf(&Application{}),
+		PrimaryKey: "id",
+	}
+	return &ApplicationRepo{repository}
+}
+
+type DeploymentRepo struct {
+	Repository
+}
+
+func NewDeploymentRepo(db *pgxpool.Pool) *DeploymentRepo {
+	repository := Repository{
+		Db:         db,
+		TableName:  "deployments",
+		Model:      reflect.TypeOf(&Deployment{}),
+		PrimaryKey: "id",
+	}
+	return &DeploymentRepo{repository}
+}
+
+type TTYAccessTokenRepo struct {
+	Repository
+}
+
+func NewTTYAccessTokenRepo(db *pgxpool.Pool) *TTYAccessTokenRepo {
+	repository := Repository{
+		Db:         db,
+		TableName:  "tty_access_tokens",
+		Model:      reflect.TypeOf(&TTYAccessToken{}),
+		PrimaryKey: "id",
+	}
+	return &TTYAccessTokenRepo{repository}
 }
