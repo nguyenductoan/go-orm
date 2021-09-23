@@ -12,6 +12,10 @@ import (
 	"github.com/jackc/pgx/v4/pgxpool"
 )
 
+const (
+	DATABASE_TAG string = "db"
+)
+
 type RowInfo map[string]interface{}
 
 type Repository struct {
@@ -61,6 +65,19 @@ func NewTTYAccessTokenRepo(db *pgxpool.Pool) *TTYAccessTokenRepo {
 		PrimaryKey: "id",
 	}
 	return &TTYAccessTokenRepo{repository}
+}
+
+func (repo Repository) PrimaryKeyValue(record Model) string {
+	v := reflect.ValueOf(record).Elem()
+	for i := 0; i < v.NumField(); i++ {
+		fieldInfo := v.Type().Field(i) // a reflect.StructField
+		if fieldInfo.Tag.Get(DATABASE_TAG) == repo.PrimaryKey {
+			valueField := v.Field(i)
+			val := reflect.ValueOf(valueField.Interface())
+			return reflectValue(val).(string)
+		}
+	}
+	return ""
 }
 
 func (repo Repository) List(ctx context.Context) (records []interface{}, err error) {
@@ -123,10 +140,10 @@ func (repo Repository) Add(ctx context.Context, record Model) (result Model, err
 		fieldInfo := v.Type().Field(i) // a reflect.StructField
 		valueField := v.Field(i)
 		tag := fieldInfo.Tag
-		if tag.Get("db") == repo.PrimaryKey {
+		if tag.Get(DATABASE_TAG) == repo.PrimaryKey {
 			continue
 		}
-		names = append(names, tag.Get("db"))
+		names = append(names, tag.Get(DATABASE_TAG))
 		val := reflect.ValueOf(valueField.Interface())
 		fieldValues = append(fieldValues, reflectValue(val))
 
@@ -159,31 +176,30 @@ func (repo Repository) Add(ctx context.Context, record Model) (result Model, err
 }
 
 func (repo Repository) Update(ctx context.Context, updateRecord Model) (record Model, err error) {
-	var recordId string
 	v := reflect.ValueOf(updateRecord).Elem()
-	names := []string{}
+	fieldNames := []string{}
 	fieldValues := []interface{}{}
 	assignment := []string{}
 	counter := 1
 	for i := 0; i < v.NumField(); i++ {
 		fieldInfo := v.Type().Field(i) // a reflect.StructField
-		valueField := v.Field(i)
 		tag := fieldInfo.Tag
+		valueField := v.Field(i)
 		val := reflect.ValueOf(valueField.Interface())
-		if tag.Get("db") == repo.PrimaryKey {
-			recordId = reflectValue(val).(string)
+		if tag.Get(DATABASE_TAG) == repo.PrimaryKey {
 			continue
 		}
 
-		names = append(names, tag.Get("db"))
+		fieldNames = append(fieldNames, tag.Get(DATABASE_TAG))
 		fieldValues = append(fieldValues, reflectValue(val))
-		assignment = append(assignment, fmt.Sprintf("%s=$%d", tag.Get("db"), counter))
+		assignment = append(assignment, fmt.Sprintf("%s=$%d", tag.Get(DATABASE_TAG), counter))
 		counter = counter + 1
 	}
-	fieldNameString := repo.PrimaryKey + ", " + strings.Join(names, ", ")
+	fieldNameString := repo.PrimaryKey + ", " + strings.Join(fieldNames, ", ")
 	assignmentString := strings.Join(assignment, ", ")
 
-	stm := fmt.Sprintf("UPDATE %s SET %s WHERE %s=%s returning %s", repo.TableName, assignmentString, repo.PrimaryKey, recordId, fieldNameString)
+	primaryKeyVal := repo.PrimaryKeyValue(updateRecord)
+	stm := fmt.Sprintf("UPDATE %s SET %s WHERE %s=%s returning %s", repo.TableName, assignmentString, repo.PrimaryKey, primaryKeyVal, fieldNameString)
 	fmt.Printf("stm: %v\n", stm)
 	rows, err := repo.Db.Query(ctx, stm, fieldValues...)
 	if !rows.Next() {
@@ -270,7 +286,7 @@ func (repo Repository) initRecord(rowInfo RowInfo) (record interface{}, err erro
 	for i := 0; i < v.NumField(); i++ {
 		fieldInfo := v.Type().Field(i) // a reflect.StructField
 		tag := fieldInfo.Tag
-		name := tag.Get("db") // a reflect.StructTag
+		name := tag.Get(DATABASE_TAG) // a reflect.StructTag
 		f := v.Field(i)
 		value, ok := rowInfo[name]
 		if !ok {
@@ -282,6 +298,6 @@ func (repo Repository) initRecord(rowInfo RowInfo) (record interface{}, err erro
 			return nil, err
 		}
 	}
-
 	return record, nil
 }
+
