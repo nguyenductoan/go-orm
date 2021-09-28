@@ -3,15 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"reflect"
 
-	"github.com/jackc/pgtype"
 	"github.com/jackc/pgx/v4/pgxpool"
 )
 
 func main() {
 	dbURL := "postgres://admin:admin@127.0.0.1:5432/hero2"
-	connString := fmt.Sprintf("%s?sslmode=%s&pool_max_conns=%d", dbURL, "disable", 3)
+	connString := fmt.Sprintf("%s?sslmode=%s&pool_max_conns=%d", dbURL, "disable", 4)
 	poolConfig, err := pgxpool.ParseConfig(connString)
 	if err != nil {
 		panic(err)
@@ -22,6 +20,7 @@ func main() {
 	}
 
 	applicationRepo := NewApplicationRepo(db)
+	deploymentRepo := NewDeploymentRepo(db)
 
 	fmt.Printf("** Test List method\n")
 	records, err := applicationRepo.List(context.Background())
@@ -71,7 +70,6 @@ func main() {
 	}
 
 	fmt.Printf("\n**Test List method For TTYAccessToken\n")
-	deploymentRepo := NewDeploymentRepo(db)
 	deploymentRecords, err := deploymentRepo.List(context.Background())
 	if err != nil {
 		panic(err)
@@ -80,46 +78,16 @@ func main() {
 		d := r.(*Deployment)
 		fmt.Printf("Id: %s; AppId: %d; Status: %s; UpdatedAt: %v\n", d.Id, d.AppId, d.Status, d.UpdatedAt)
 	}
-}
 
-func parseArr(arrValue interface{}) (result []reflect.Value) {
-	val := reflect.ValueOf(arrValue)
-	switch val.Kind() {
-	case reflect.Struct:
-		switch arrValue.(type) {
-		case pgtype.TextArray:
-			arr := arrValue.(pgtype.TextArray)
-			elems := arr.Elements
-			for _, elem := range elems {
-				v, err := elem.Value()
-				if v != nil && err == nil {
-					result = append(result, reflect.ValueOf(v))
-				}
-			}
-		default:
-			fmt.Printf("WARN: type %T is not supported\n", arrValue)
-		}
-	case reflect.Ptr:
-		switch arrValue.(type) {
-		case *pgtype.TextArray:
-			arr := arrValue.(*pgtype.TextArray)
-			elems := arr.Elements
-			for _, elem := range elems {
-				v, err := elem.Value()
-				if v != nil && err == nil {
-					result = append(result, reflect.ValueOf(v))
-				}
-			}
-		default:
-			fmt.Printf("WARN: type %T is not supported\n", arrValue)
-		}
-	case reflect.Slice, reflect.Array:
-		for i := 0; i < val.Len(); i++ {
-			result = append(result, val.Index(i))
-		}
-	default:
-		fmt.Printf("value: %v\n", arrValue)
-		fmt.Printf("WARN: kind %T is not supported\n", arrValue)
+	fmt.Printf("\n**Test Find and Update method For Deployment\n")
+	recordFindToken, err := deploymentRepo.Find(context.Background(), "f66b66a2-18c7-43ce-8b55-a2a9991e436e")
+	if err != nil {
+		panic(err)
 	}
-	return
+	record, err = deploymentRepo.Update(context.Background(), recordFindToken)
+	if err != nil {
+		panic(err)
+	}
+	d := record.(*Deployment)
+	fmt.Printf("Id: %s; AppId: %d; Status: %s; UpdatedAt: %v\n", d.Id, d.AppId, d.Status, d.UpdatedAt)
 }

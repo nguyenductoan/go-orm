@@ -7,13 +7,17 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/gofrs/uuid"
+	"github.com/jackc/pgtype"
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
 )
 
 const (
-	DATABASE_TAG string = "db"
+	DATABASE_TAG          string = "db"
+	UPDATED_AT_FIELD_NAME string = "updated_at"
 )
 
 type RowInfo map[string]interface{}
@@ -36,8 +40,16 @@ func (repo Repository) PrimaryKeyValue(record Model) string {
 		fieldInfo := v.Type().Field(i) // a reflect.StructField
 		if fieldInfo.Tag.Get(DATABASE_TAG) == repo.PrimaryKey {
 			valueField := v.Field(i)
-			val := reflect.ValueOf(valueField.Interface())
-			return reflectValue(val).(string)
+			switch valueField.Kind() {
+			case reflect.String:
+				return valueField.String()
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+				return strconv.FormatInt(valueField.Int(), 10)
+			case reflect.Array:
+				return valueField.Interface().(uuid.UUID).String()
+			default:
+				panic("primary key with unsupported type")
+			}
 		}
 	}
 	return ""
@@ -68,7 +80,7 @@ func (repo Repository) List(ctx context.Context) (records []interface{}, err err
 
 func (repo Repository) Find(ctx context.Context, primaryKey string) (record Model, err error) {
 	if primaryKey == "" {
-		return nil, errors.New("primaryKey is empty")
+		return nil, errors.New("primary key is empty")
 	}
 	stm := fmt.Sprintf("SELECT * FROM %s WHERE %s=$1", repo.TableName, repo.PrimaryKey)
 	rows, err := repo.Db.Query(ctx, stm, primaryKey)
@@ -107,16 +119,17 @@ func (repo Repository) Add(ctx context.Context, record Model) (result Model, err
 	rowInfo, extractErr := extractRowInfo(rows)
 	if extractErr != nil {
 		err = fmt.Errorf("extract row info error: %v", extractErr)
+		return
 	}
 	record, initErr := repo.initRecord(rowInfo)
 	if initErr != nil {
 		err = fmt.Errorf("init record error: %v", initErr)
-		return
 	}
 	return
 }
 
 func (repo Repository) Update(ctx context.Context, updateRecord Model) (record Model, err error) {
+	captureUpdateTime(updateRecord)
 	stm, fieldValues := repo.UpdateStatement(updateRecord)
 	fmt.Printf("stm: %v\n", stm)
 	rows, err := repo.Db.Query(ctx, stm, fieldValues...)
@@ -225,7 +238,7 @@ func (repo Repository) UpdateStatement(record Model) (stm string, values []inter
 	for _, val := range recordInfo.FieldValues {
 		values = append(values, reflectValue(val))
 	}
-	stm = fmt.Sprintf("UPDATE %s SET %s WHERE %s=%s returning %s", repo.TableName, assignmentStm, repo.PrimaryKey, primaryKeyVal, fieldNameStm)
+	stm = fmt.Sprintf("UPDATE %s SET %s WHERE %s='%s' returning %s", repo.TableName, assignmentStm, repo.PrimaryKey, primaryKeyVal, fieldNameStm)
 	return
 }
 
@@ -272,14 +285,70 @@ func (repo Repository) initRecord(rowInfo RowInfo) (record interface{}, err erro
 func reflectValue(val reflect.Value) (result interface{}) {
 	switch val.Kind() {
 	case reflect.Slice, reflect.Array:
-		return []string{}
+		return val.Interface()
 	case reflect.String:
 		return val.String()
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return strconv.FormatInt(val.Int(), 10)
 	case reflect.Struct:
+		return val.Interface()
 	default:
 		panic(errors.New("convert reflectValue error"))
+	}
+}
+
+func parseArr(arrValue interface{}) (result []reflect.Value) {
+	val := reflect.ValueOf(arrValue)
+	switch val.Kind() {
+	case reflect.Struct:
+		switch arrValue.(type) {
+		case pgtype.TextArray:
+			arr := arrValue.(pgtype.TextArray)
+			elems := arr.Elements
+			for _, elem := range elems {
+				v, err := elem.Value()
+				if v != nil && err == nil {
+					result = append(result, reflect.ValueOf(v))
+				}
+			}
+		default:
+			fmt.Printf("WARN: type %T is not supported\n", arrValue)
+		}
+	case reflect.Ptr:
+		switch arrValue.(type) {
+		case *pgtype.TextArray:
+			arr := arrValue.(*pgtype.TextArray)
+			elems := arr.Elements
+			for _, elem := range elems {
+				v, err := elem.Value()
+				if v != nil && err == nil {
+					result = append(result, reflect.ValueOf(v))
+				}
+			}
+		default:
+			fmt.Printf("WARN: type %T is not supported\n", arrValue)
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < val.Len(); i++ {
+			result = append(result, val.Index(i))
+		}
+	default:
+		fmt.Printf("WARN: kind %T is not supported\n", arrValue)
+	}
+	return
+}
+
+func captureUpdateTime(record Model) {
+	v := reflect.ValueOf(record).Elem()
+	for i := 0; i < v.NumField(); i++ {
+		fieldInfo := v.Type().Field(i) // a reflect.StructField
+		if fieldInfo.Tag.Get(DATABASE_TAG) == UPDATED_AT_FIELD_NAME {
+			valueField := v.Field(i)
+			if valueField.Kind() == reflect.Struct {
+				valueField.Set(reflect.ValueOf(time.Now()))
+				return
+			}
+		}
 	}
 	return
 }
