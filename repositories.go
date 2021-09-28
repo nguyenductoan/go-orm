@@ -9,8 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"go-orm/pkg/helpers"
+
 	"github.com/gofrs/uuid"
-	"github.com/jackc/pgtype"
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
 )
@@ -162,38 +163,6 @@ func (repo Repository) Delete(ctx context.Context, primaryKey string) (err error
 	return
 }
 
-func populate(v reflect.Value, value interface{}) error {
-	switch v.Kind() {
-	case reflect.String:
-		if _, ok := value.(string); ok {
-			v.SetString(value.(string))
-		} else {
-			v.SetString("invalid")
-		}
-	case reflect.Slice:
-		arr := parseArr(value)
-		for _, elem := range arr {
-			v.Set(reflect.Append(v, elem))
-		}
-	case reflect.Array:
-		v.Set(reflect.ValueOf(value))
-	case reflect.Int:
-		i, err := strconv.ParseInt(fmt.Sprintf("%d", value), 10, 64)
-		if err != nil {
-			return err
-		}
-		v.SetInt(i)
-	case reflect.Bool:
-		v.SetBool(value.(bool))
-	case reflect.Struct:
-		v.Set(reflect.ValueOf(value))
-	case reflect.Ptr:
-	default:
-		return fmt.Errorf("unsupported kind %s", v.Type())
-	}
-	return nil
-}
-
 func extractRowInfo(rows pgx.Rows) (info RowInfo, err error) {
 	info = make(RowInfo)
 	fieldValues, err := rows.Values()
@@ -236,7 +205,7 @@ func (repo Repository) UpdateStatement(record Model) (stm string, values []inter
 	fieldNameStm := strings.Join(recordInfo.FieldTagNames, ", ")
 
 	for _, val := range recordInfo.FieldValues {
-		values = append(values, reflectValue(val))
+		values = append(values, helpers.UnderlyingValue(val))
 	}
 	stm = fmt.Sprintf("UPDATE %s SET %s WHERE %s='%s' returning %s", repo.TableName, assignmentStm, repo.PrimaryKey, primaryKeyVal, fieldNameStm)
 	return
@@ -254,7 +223,7 @@ func (repo Repository) InsertStatement(record Model) (stm string, values []inter
 	fieldNameStm := strings.Join(recordInfo.FieldTagNames, ", ")
 	fieldIndexStm := strings.Join(fieldIndex, ", ")
 	for _, val := range recordInfo.FieldValues {
-		values = append(values, reflectValue(val))
+		values = append(values, helpers.UnderlyingValue(val))
 	}
 
 	stm = fmt.Sprintf("INSERT INTO %s (%s) values(%s) returning %s", repo.TableName, fieldNameStm, fieldIndexStm, fieldNameStm)
@@ -273,69 +242,13 @@ func (repo Repository) initRecord(rowInfo RowInfo) (record interface{}, err erro
 		if !ok {
 			continue
 		}
-		err = populate(f, value)
+		err = helpers.Populate(f, value)
 		if err != nil {
 			err = fmt.Errorf("populate value to field error: %v", err)
 			return nil, err
 		}
 	}
 	return record, nil
-}
-
-func reflectValue(val reflect.Value) (result interface{}) {
-	switch val.Kind() {
-	case reflect.Slice, reflect.Array:
-		return val.Interface()
-	case reflect.String:
-		return val.String()
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return strconv.FormatInt(val.Int(), 10)
-	case reflect.Struct:
-		return val.Interface()
-	default:
-		panic(errors.New("convert reflectValue error"))
-	}
-}
-
-func parseArr(arrValue interface{}) (result []reflect.Value) {
-	val := reflect.ValueOf(arrValue)
-	switch val.Kind() {
-	case reflect.Struct:
-		switch arrValue.(type) {
-		case pgtype.TextArray:
-			arr := arrValue.(pgtype.TextArray)
-			elems := arr.Elements
-			for _, elem := range elems {
-				v, err := elem.Value()
-				if v != nil && err == nil {
-					result = append(result, reflect.ValueOf(v))
-				}
-			}
-		default:
-			fmt.Printf("WARN: type %T is not supported\n", arrValue)
-		}
-	case reflect.Ptr:
-		switch arrValue.(type) {
-		case *pgtype.TextArray:
-			arr := arrValue.(*pgtype.TextArray)
-			elems := arr.Elements
-			for _, elem := range elems {
-				v, err := elem.Value()
-				if v != nil && err == nil {
-					result = append(result, reflect.ValueOf(v))
-				}
-			}
-		default:
-			fmt.Printf("WARN: type %T is not supported\n", arrValue)
-		}
-	case reflect.Slice, reflect.Array:
-		for i := 0; i < val.Len(); i++ {
-			result = append(result, val.Index(i))
-		}
-	default:
-		fmt.Printf("WARN: kind %T is not supported\n", arrValue)
-	}
-	return
 }
 
 func captureUpdateTime(record Model) {
